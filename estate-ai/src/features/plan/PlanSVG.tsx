@@ -2,7 +2,7 @@ import type { PointerEvent as RPointerEvent, ReactNode } from 'react';
 import { roomFloorArea, roomHasShape } from '../../core/calc';
 import { roomTypeLabel } from '../../core/catalog';
 import { add, bounds, centroid, pointInPolygon, edgeLength, edgeOutwardNormal, norm, offsetPolygon, orientedRect, perp, pointOnEdge, scale, sub } from '../../core/geometry';
-import type { FurnitureItem, Opening, Point, Property, Provenance, Room } from '../../core/types';
+import type { Annotation, FurnitureItem, Opening, Point, Property, Provenance, Room } from '../../core/types';
 import { fmtArea, fmtLen } from '../../core/units';
 
 export interface PlanTheme {
@@ -54,6 +54,7 @@ export interface PlanHandlers {
   onOpeningDown?: (e: RPointerEvent, room: Room, o: Opening) => void;
   onFurnitureDown?: (e: RPointerEvent, room: Room, f: FurnitureItem) => void;
   onDimClick?: (room: Room, edge: number) => void;
+  onAnnotationDown?: (e: RPointerEvent, a: Annotation) => void;
 }
 
 export interface PlanOptions {
@@ -66,6 +67,8 @@ export interface PlanOptions {
   selectedEdge?: number;
   selectedOpeningId?: string;
   selectedFurnitureId?: string;
+  selectedAnnotationId?: string;
+  showAnnotations?: boolean;
   editVertices?: boolean;
   theme?: PlanTheme;
   furnitureOverride?: Record<string, FurnitureItem[]>; // room id -> furniture (concepts)
@@ -140,6 +143,11 @@ export function PlanContent({ property, opts, handlers = {} }: { property: Prope
         )}
       {/* dimensions */}
       {opts.showDims !== false && rooms.map((r) => <RoomDims key={'d' + r.id} room={r} others={rooms.filter((o) => o.id !== r.id).map((o) => offsetPolygon(o.polygon, o.wallThickness))} t={t} fs={fs} units={u} statusColors={opts.showStatusColors !== false} onDimClick={handlers.onDimClick} />)}
+      {/* tape-measure lines */}
+      {opts.showAnnotations !== false &&
+        (property.annotations ?? []).filter((a) => a.floorId === opts.floorId).map((a) => (
+          <AnnotationShape key={a.id} a={a} t={t} fs={fs} units={u} selected={a.id === opts.selectedAnnotationId} onDown={handlers.onAnnotationDown ? (e) => handlers.onAnnotationDown!(e, a) : undefined} />
+        ))}
       {/* labels */}
       {opts.showLabels !== false &&
         rooms.map((r) => {
@@ -183,6 +191,32 @@ export function PlanContent({ property, opts, handlers = {} }: { property: Prope
           )}
         </g>
       ))}
+    </g>
+  );
+}
+
+function AnnotationShape({ a, t, fs, units, selected, onDown }: { a: Annotation; t: PlanTheme; fs: number; units: Property['units']; selected: boolean; onDown?: (e: RPointerEvent) => void }) {
+  const L = Math.hypot(a.b.x - a.a.x, a.b.y - a.a.y);
+  if (L < 1) return null;
+  const st: Provenance = a.measured && a.measured.status !== 'unknown' ? a.measured.status : 'drawn';
+  const col = selected ? t.accent : t.dim[st];
+  const dir = { x: (a.b.x - a.a.x) / L, y: (a.b.y - a.a.y) / L };
+  const n = { x: -dir.y * fs * 0.45, y: dir.x * fs * 0.45 };
+  const mid = { x: (a.a.x + a.b.x) / 2, y: (a.a.y + a.b.y) / 2 };
+  let ang = (Math.atan2(dir.y, dir.x) * 180) / Math.PI;
+  if (ang > 90) ang -= 180;
+  if (ang < -90) ang += 180;
+  const value = st === 'drawn' ? `${fmtLen(L, units)} ?` : `${fmtLen(a.measured!.value, units)}${st === 'estimated' ? ' ~' : ''}`;
+  const text = a.label ? `${a.label}: ${value}` : value;
+  const w = fs * 0.62 * text.length;
+  return (
+    <g onPointerDown={onDown} style={{ cursor: onDown ? 'pointer' : undefined }} data-annotation={a.id}>
+      <line x1={a.a.x} y1={a.a.y} x2={a.b.x} y2={a.b.y} stroke="transparent" strokeWidth={fs * 1.6} />
+      <line x1={a.a.x} y1={a.a.y} x2={a.b.x} y2={a.b.y} stroke={col} strokeWidth={fs * (selected ? 0.16 : 0.1)} strokeDasharray={st === 'measured' ? undefined : `${fs * 0.4} ${fs * 0.25}`} />
+      <line x1={a.a.x - n.x} y1={a.a.y - n.y} x2={a.a.x + n.x} y2={a.a.y + n.y} stroke={col} strokeWidth={fs * 0.1} />
+      <line x1={a.b.x - n.x} y1={a.b.y - n.y} x2={a.b.x + n.x} y2={a.b.y + n.y} stroke={col} strokeWidth={fs * 0.1} />
+      <rect x={mid.x - w / 2} y={mid.y - fs * 0.65} width={w} height={fs * 1.3} rx={fs * 0.3} fill={t.bg} stroke={col} strokeWidth={fs * 0.05} transform={`rotate(${ang} ${mid.x} ${mid.y})`} />
+      <text x={mid.x} y={mid.y + fs * 0.3} fontSize={fs * 0.85} fill={col} textAnchor="middle" transform={`rotate(${ang} ${mid.x} ${mid.y})`} fontFamily="Inter, -apple-system, Segoe UI, sans-serif">{text}</text>
     </g>
   );
 }

@@ -13,8 +13,9 @@ import { go } from '../ui/router';
 import { PlanCanvas, type PlanCanvasHandle } from './plan/PlanCanvas';
 import { DARK_THEME, PlanContent, floorBounds } from './plan/PlanSVG';
 import { doorSwings } from '../core/copilot';
+import { MeasureSheet } from './capture/MeasureSheet';
 
-type Tool = 'select' | 'vertex' | 'room' | 'door' | 'window' | 'opening' | 'sliding-door' | 'double-door' | 'furniture';
+type Tool = 'select' | 'vertex' | 'room' | 'measure' | 'door' | 'window' | 'opening' | 'sliding-door' | 'double-door' | 'furniture';
 
 type Sel =
   | { kind: 'room'; roomId: string }
@@ -24,7 +25,7 @@ type Sel =
   | null;
 
 interface Drag {
-  kind: 'room' | 'vertex' | 'edge' | 'opening' | 'furniture' | 'newroom';
+  kind: 'room' | 'vertex' | 'edge' | 'opening' | 'furniture' | 'newroom' | 'tape';
   roomId?: string;
   index?: number;
   id?: string;
@@ -53,6 +54,35 @@ export default function PlanEditor({ property }: PageProps) {
   const floor = property.floors.find((f) => f.id === floorId) ?? property.floors[0];
   const rooms = property.rooms.filter((r) => r.floorId === floor.id);
   const selRoom = sel ? property.rooms.find((r) => r.id === sel.roomId) : undefined;
+  const [tape, setTape] = useState<{ a: Point; b: Point } | null>(null);
+  const [annEdit, setAnnEdit] = useState<string | null>(null);
+  const [measureRoom, setMeasureRoom] = useState<string | null>(null);
+  /** Snap a tape end to a room corner, then to a wall face, then to the grid. */
+  const snapTape = (p: Point): Point => {
+    const t = tol();
+    let best: Point | null = null;
+    let bd = t;
+    for (const r of rooms)
+      for (const v of r.polygon) {
+        const d = dist(v, p);
+        if (d < bd) {
+          bd = d;
+          best = v;
+        }
+      }
+    if (best) return best;
+    bd = t;
+    for (const r of rooms)
+      for (let i = 0; i < r.polygon.length; i++) {
+        const pr = projectOnSegment(p, r.polygon[i], r.polygon[(i + 1) % r.polygon.length]).point;
+        const d = dist(pr, p);
+        if (d < bd) {
+          bd = d;
+          best = pr;
+        }
+      }
+    return best ?? snapPt(p);
+  };
   const initial = useMemo(() => floorBounds(property, floor.id), [floor.id]); // eslint-disable-line
   const grid = settings.gridMm || 50;
   const unshaped = rooms.filter((r) => r.polygon.length < 3);
@@ -73,6 +103,12 @@ export default function PlanEditor({ property }: PageProps) {
         updateProperty(propRef.current.id, (x) => x); // one undo step for the whole drag
       }
       const pid = propRef.current.id;
+      if (d.kind === 'tape') {
+        const t2 = { a: snapTape(d.start), b: snapTape(p) };
+        d.rect = t2;
+        setTape(t2);
+        return;
+      }
       if (d.kind === 'newroom') {
         const a = snapPt(d.start);
         const b = snapPt(p);
@@ -122,6 +158,16 @@ export default function PlanEditor({ property }: PageProps) {
     const up = () => {
       const d = drag.current;
       drag.current = null;
+      if (d?.kind === 'tape') {
+        setTape(null);
+        const t2 = d.rect;
+        if (t2 && dist(t2.a, t2.b) > 150) {
+          const ann = { id: uid('an_'), floorId: floor.id, a: t2.a, b: t2.b };
+          updateProperty(propRef.current.id, (p) => ({ ...p, annotations: [...(p.annotations ?? []), ann] }), { history: false });
+          setAnnEdit(ann.id);
+        }
+        return;
+      }
       if (d?.kind === 'newroom') {
         const r = d.rect;
         setNewRect(null);
@@ -175,6 +221,15 @@ export default function PlanEditor({ property }: PageProps) {
     drag.current = { ...d, start: canvas.current!.toPlan(e.clientX, e.clientY), moved: false };
   };
 
+  /** In the measure and draw-room tools a press anywhere starts that tool, even over furniture or a door. */
+  const startToolDrag = (e: RPointerEvent) => {
+    if (tool !== 'measure' && tool !== 'room') return false;
+    e.stopPropagation();
+    e.preventDefault();
+    drag.current = { kind: tool === 'measure' ? 'tape' : 'newroom', start: canvas.current!.toPlan(e.clientX, e.clientY), moved: false };
+    return true;
+  };
+
   const placeOpening = (room: Room, edge: number, p: Point, type: OpeningType) => {
     const a = room.polygon[edge];
     const b = room.polygon[(edge + 1) % room.polygon.length];
@@ -188,6 +243,12 @@ export default function PlanEditor({ property }: PageProps) {
 
   const handlers = {
     onRoomDown: (e: RPointerEvent, r: Room) => {
+      if (tool === 'measure') {
+        e.stopPropagation();
+        e.preventDefault();
+        drag.current = { kind: 'tape', start: canvas.current!.toPlan(e.clientX, e.clientY), moved: false };
+        return;
+      }
       if (tool === 'room') {
         // draw a new room even when starting over an existing one
         e.stopPropagation();
@@ -200,9 +261,9 @@ export default function PlanEditor({ property }: PageProps) {
     },
     onEdgeDown: (e: RPointerEvent, r: Room, i: number) => {
       const p = canvas.current!.toPlan(e.clientX, e.clientY);
-      if (tool === 'room') {
+      if (tool === 'room' || tool === 'measure') {
         e.stopPropagation();
-        drag.current = { kind: 'newroom', start: p, moved: false };
+        drag.current = { kind: tool === 'room' ? 'newroom' : 'tape', start: p, moved: false };
         return;
       }
       if (['door', 'window', 'opening', 'sliding-door', 'double-door'].includes(tool)) {
@@ -223,17 +284,30 @@ export default function PlanEditor({ property }: PageProps) {
       startDrag(e, { kind: 'vertex', roomId: r.id, index: i, orig: r });
     },
     onOpeningDown: (e: RPointerEvent, r: Room, o: { id: string }) => {
+      if (startToolDrag(e)) return;
       setSel({ kind: 'opening', roomId: r.id, openingId: o.id });
       startDrag(e, { kind: 'opening', roomId: r.id, id: o.id, orig: r });
     },
     onFurnitureDown: (e: RPointerEvent, r: Room, f: FurnitureItem) => {
+      if (startToolDrag(e)) return;
       setSel({ kind: 'furniture', roomId: r.id, furnitureId: f.id });
       startDrag(e, { kind: 'furniture', roomId: r.id, id: f.id, orig: r });
     },
     onDimClick: (r: Room, i: number) => setDimEdit({ roomId: r.id, edge: i }),
+    onAnnotationDown: (e: RPointerEvent, a: { id: string }) => {
+      if (tool === 'measure' || tool === 'select') {
+        e.stopPropagation();
+        setAnnEdit(a.id);
+      }
+    },
   };
 
   const onBackgroundDown = (e: RPointerEvent, p: Point) => {
+    if (tool === 'measure') {
+      e.preventDefault();
+      drag.current = { kind: 'tape', start: p, moved: false };
+      return;
+    }
     if (tool === 'room') {
       e.preventDefault();
       drag.current = { kind: 'newroom', start: p, moved: false };
@@ -264,6 +338,7 @@ export default function PlanEditor({ property }: PageProps) {
     { id: 'room', icon: 'plus', label: 'Draw a room (drag)' },
     { id: 'door', icon: 'door', label: 'Add door (click a wall)' },
     { id: 'window', icon: 'window', label: 'Add window (click a wall)' },
+    { id: 'measure', icon: 'ruler', label: 'Measure: drag between two points, then type the real length' },
   ];
 
   return (
@@ -281,10 +356,19 @@ export default function PlanEditor({ property }: PageProps) {
               selectedEdge: sel?.kind === 'edge' ? sel.edge : undefined,
               selectedOpeningId: sel?.kind === 'opening' ? sel.openingId : undefined,
               selectedFurnitureId: sel?.kind === 'furniture' ? sel.furnitureId : undefined,
+              selectedAnnotationId: annEdit ?? undefined,
               editVertices: tool === 'vertex' || sel?.kind === 'room',
               theme: DARK_THEME,
             }}
           />
+          {tape && (
+            <g pointerEvents="none">
+              <line x1={tape.a.x} y1={tape.a.y} x2={tape.b.x} y2={tape.b.y} stroke="#c8a96a" strokeWidth={(canvas.current?.mmPerPx() ?? 10) * 3} />
+              <circle cx={tape.a.x} cy={tape.a.y} r={(canvas.current?.mmPerPx() ?? 10) * 6} fill="#c8a96a" />
+              <circle cx={tape.b.x} cy={tape.b.y} r={(canvas.current?.mmPerPx() ?? 10) * 6} fill="#c8a96a" />
+              <text x={(tape.a.x + tape.b.x) / 2} y={(tape.a.y + tape.b.y) / 2 - (canvas.current?.mmPerPx() ?? 10) * 12} fontSize={(canvas.current?.mmPerPx() ?? 10) * 16} fill="#fff" stroke="#000" strokeWidth={(canvas.current?.mmPerPx() ?? 10) * 3} paintOrder="stroke" textAnchor="middle">{fmtLen(dist(tape.a, tape.b), property.units)}</text>
+            </g>
+          )}
           {newRect && (
             <rect
               x={Math.min(newRect.a.x, newRect.b.x)}
@@ -378,7 +462,7 @@ export default function PlanEditor({ property }: PageProps) {
           <label className="check"><input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> Snap</label>
         </div>
         {sel ? (
-          <SelectionPanel property={property} sel={sel} setSel={setSel} onDeleteRoom={() => setConfirmDel(true)} rotate={rotateFurniture} />
+          <SelectionPanel property={property} sel={sel} setSel={setSel} onDeleteRoom={() => setConfirmDel(true)} rotate={rotateFurniture} onMeasure={setMeasureRoom} />
         ) : (
           <div className="stack">
             <h3>Rooms on {floor.name}</h3>
@@ -404,6 +488,8 @@ export default function PlanEditor({ property }: PageProps) {
         )}
       </aside>
 
+      {annEdit && <AnnotationDialog property={property} id={annEdit} onClose={() => setAnnEdit(null)} />}
+      {measureRoom && property.rooms.find((r) => r.id === measureRoom) && <MeasureSheet property={property} room={property.rooms.find((r) => r.id === measureRoom)!} onClose={() => setMeasureRoom(null)} />}
       {dimEdit && <DimDialog property={property} roomId={dimEdit.roomId} edge={dimEdit.edge} onClose={() => setDimEdit(null)} />}
       {confirmDel && selRoom && (
         <Confirm
@@ -481,7 +567,7 @@ function DimDialog({ property, roomId, edge, onClose }: { property: Property; ro
   );
 }
 
-function SelectionPanel({ property, sel, setSel, onDeleteRoom, rotate }: { property: Property; sel: NonNullable<Sel>; setSel: (s: Sel) => void; onDeleteRoom: () => void; rotate: (d: number) => void }) {
+function SelectionPanel({ property, sel, setSel, onDeleteRoom, rotate, onMeasure }: { property: Property; sel: NonNullable<Sel>; setSel: (s: Sel) => void; onDeleteRoom: () => void; rotate: (d: number) => void; onMeasure: (roomId: string) => void }) {
   const room = property.rooms.find((r) => r.id === sel.roomId);
   if (!room) return null;
   const u = property.units;
@@ -605,7 +691,7 @@ function SelectionPanel({ property, sel, setSel, onDeleteRoom, rotate }: { prope
       <div className="row between">
         <h3>{room.name}</h3>
         <div className="row nowrap">
-          <button className="btn sm" onClick={() => go(`p/${pid}/scan/${room.id}`)}>Measurements</button>
+          <button className="btn sm primary" onClick={() => onMeasure(room.id)} data-testid="plan-measure-room"><Icon name="ruler" /> Measure</button>
           <button className="btn sm danger icon" onClick={onDeleteRoom} aria-label="Delete room"><Icon name="trash" /></button>
         </div>
       </div>
@@ -665,5 +751,37 @@ function FurnitureQuickAdd({ property, room }: { property: Property; room: Room 
         }}
       >Add</button>
     </div>
+  );
+}
+
+function AnnotationDialog({ property, id, onClose }: { property: Property; id: string; onClose: () => void }) {
+  const a = (property.annotations ?? []).find((x) => x.id === id);
+  const [label, setLabel] = useState(a?.label ?? '');
+  const [m, setM] = useState<Measure>(a?.measured ?? { value: 0, status: 'unknown', method: 'tape' });
+  if (!a) return null;
+  const drawn = dist(a.a, a.b);
+  const save = () => {
+    updateProperty(property.id, (p) => ({ ...p, annotations: (p.annotations ?? []).map((x) => (x.id === id ? { ...x, label: label.trim() || undefined, measured: m.status === 'unknown' ? undefined : m } : x)) }));
+    onClose();
+  };
+  return (
+    <Modal
+      title="Measurement"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn danger" onClick={() => { updateProperty(property.id, (p) => ({ ...p, annotations: (p.annotations ?? []).filter((x) => x.id !== id) })); onClose(); }}>Delete</button>
+          <span className="spacer" />
+          <button className="btn primary" onClick={save} data-testid="save-annotation">Save</button>
+        </>
+      }
+    >
+      <p className="muted">On the plan this line is {fmtLen(drawn, property.units)}. Type what you measured in the room to record it; the line turns green.</p>
+      <label className="field">What is it? (optional)<input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Window to corner, Bench run" autoFocus data-testid="annotation-label" /></label>
+      <MeasureEditor m={m} units={property.units} label="Measured length" onChange={setM} />
+      {m.status !== 'unknown' && Math.abs(m.value - drawn) > Math.max(30, drawn * 0.03) && (
+        <div className="note warn">Your measurement differs from the plan by {fmtLen(Math.abs(m.value - drawn), property.units)}. If the walls are wrong, fix them with the room's Measure button.</div>
+      )}
+    </Modal>
   );
 }

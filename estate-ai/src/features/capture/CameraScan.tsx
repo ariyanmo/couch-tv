@@ -4,6 +4,7 @@ import { aim, calibrate, cameraDirection, ceilingHeight, floorPointFromDirs, nea
 import type { MeasureMethod, Point, UnitSystem } from '../../core/types';
 import { fmtArea, fmtLen } from '../../core/units';
 import { LengthInput } from '../../ui/components';
+import { DEFAULT_FOV_LONG, boundaryToPoints, coverageDeg, fitRoom, floorBoundary, sampleFloor, type CameraModel, type FloorModel, type Frame, type RoomFit } from '../../core/autoscan';
 import { Icon } from '../../ui/icons';
 
 export interface ScanResult {
@@ -14,7 +15,10 @@ export interface ScanResult {
   photos: Blob[];
 }
 
-type Stage = 'setup' | 'corners' | 'ceiling' | 'review';
+type Stage = 'setup' | 'auto' | 'corners' | 'ceiling' | 'review';
+
+/** Test hook: lets automated tests feed synthetic frames instead of the camera. */
+type FrameSource = () => { frame: Frame; orientation: Orientation; screenAngle?: number } | null;
 type Dir = { x: number; y: number; z: number };
 
 const HEIGHT_KEY = 'estate-ai:phone-height';
@@ -46,6 +50,13 @@ export function CameraScan({ units, onDone, onClose }: { units: UnitSystem; onDo
   const [calEdge, setCalEdge] = useState(0);
   const [calLen, setCalLen] = useState<number | null>(null);
   const [flash, setFlash] = useState(false);
+  const [mode, setMode] = useState<'auto' | 'tap'>('auto');
+  const orientRef = useRef<Orientation | null>(null);
+  const overlay = useRef<HTMLCanvasElement>(null);
+  const autoPts = useRef<Point[]>([]);
+  const floorModel = useRef<FloorModel | undefined>(undefined);
+  const lastStillHeading = useRef<number | null>(null);
+  const [auto, setAuto] = useState<{ coverage: number; fit: RoomFit | null; seeing: boolean; learnt: boolean }>({ coverage: 0, fit: null, seeing: false, learnt: false });
 
   // sensor listener
   useEffect(() => {
@@ -54,6 +65,7 @@ export function CameraScan({ units, onDone, onClose }: { units: UnitSystem; onDo
       const o = { alpha: e.alpha, beta: e.beta, gamma: e.gamma };
       recent.current.push(cameraDirection(o));
       if (recent.current.length > 8) recent.current.shift();
+      orientRef.current = o;
       setOrient(o);
     };
     window.addEventListener('deviceorientation', on);
@@ -86,7 +98,10 @@ export function CameraScan({ units, onDone, onClose }: { units: UnitSystem; onDo
         setSensorProblem('Motion access could not be requested. Open the app from its https link (for example the GitHub Pages link).');
       }
     }
-    setStage('corners');
+    autoPts.current = [];
+    floorModel.current = undefined;
+    setAuto({ coverage: 0, fit: null, seeing: false, learnt: false });
+    setStage(mode === 'auto' ? 'auto' : 'corners');
     if (window.isSecureContext && navigator.mediaDevices?.getUserMedia) {
       try {
         const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
@@ -103,6 +118,114 @@ export function CameraScan({ units, onDone, onClose }: { units: UnitSystem; onDo
       if (recent.current.length) setSensorProblem(null);
       else setSensorProblem((m) => m ?? 'This device is not reporting motion sensors. Camera scan needs a phone; on a computer, enter the walls by hand.');
     }, 1500);
+  };
+
+  // ----- automatic scan: read the floor edge from video frames -----
+  useEffect(() => {
+    if (stage !== 'auto') return;
+    let stop = false;
+    let last = 0;
+    let lastFit = 0;
+    const small = document.createElement('canvas');
+    const ctx = small.getContext('2d', { willReadFrequently: true })!;
+    const tick = (t: number) => {
+      if (stop) return;
+      requestAnimationFrame(tick);
+      if (t - last < 140) return; // about 7 frames a second is plenty
+      last = t;
+      let frame: Frame | null = null;
+      let o = orientRef.current;
+      let screenAngle = (screen.orientation?.angle ?? (window as unknown as { orientation?: number }).orientation ?? 0) as number;
+      const src = (window as unknown as { __estateScanSource?: FrameSource }).__estateScanSource;
+      if (src) {
+        const f = src();
+        if (!f) return;
+        frame = f.frame;
+        o = f.orientation;
+        screenAngle = f.screenAngle ?? 0;
+      } else {
+        const v = video.current;
+        if (!v || !v.videoWidth || !o) return;
+        const k = 128 / Math.max(v.videoWidth, v.videoHeight);
+        small.width = Math.round(v.videoWidth * k);
+        small.height = Math.round(v.videoHeight * k);
+        ctx.drawImage(v, 0, 0, small.width, small.height);
+        const img = ctx.getImageData(0, 0, small.width, small.height);
+        frame = { data: img.data, width: img.width, height: img.height };
+      }
+      if (!o || !frame) return;
+      const pitch = aim(o).pitch;
+      if (pitch > -8 || pitch < -75) {
+        setAuto((a) => (a.seeing ? { ...a, seeing: false } : a));
+        drawOverlay(null, frame);
+        return;
+      }
+      // learn the floor colour from what is straight below the middle of the picture
+      floorModel.current = sampleFloor(frame, floorModel.current, floorModel.current ? 0.05 : 1);
+      const cam: CameraModel = { width: frame.width, height: frame.height, fovLong: DEFAULT_FOV_LONG, screenAngle };
+      const { boundary } = floorBoundary(frame, floorModel.current);
+      const pts = boundaryToPoints(boundary, cam, o, height);
+      if (pts.length) {
+        autoPts.current.push(...pts);
+        if (autoPts.current.length > 60000) autoPts.current.splice(0, autoPts.current.length - 60000);
+      }
+      drawOverlay(boundary, frame);
+      // a still photo every 60° of turning, for the room's photo record
+      const hd = aim(o).heading;
+      if (!src && (lastStillHeading.current == null || Math.abs(((hd - lastStillHeading.current + 540) % 360) - 180) > 60)) {
+        lastStillHeading.current = hd;
+        grab();
+      }
+      if (t - lastFit > 700) {
+        lastFit = t;
+        const fit = fitRoom(autoPts.current);
+        setAuto({ coverage: coverageDeg(autoPts.current), fit, seeing: pts.length > 3, learnt: true });
+      }
+    };
+    requestAnimationFrame(tick);
+    return () => {
+      stop = true;
+    };
+  }, [stage, height]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function drawOverlay(boundary: Int16Array | null, frame: Frame) {
+    const c = overlay.current;
+    if (!c) return;
+    const W = c.clientWidth, H = c.clientHeight;
+    if (c.width !== W) c.width = W;
+    if (c.height !== H) c.height = H;
+    const g = c.getContext('2d')!;
+    g.clearRect(0, 0, W, H);
+    if (!boundary) return;
+    // the video is shown with object-fit: cover; map frame pixels to the screen the same way
+    const k = Math.max(W / frame.width, H / frame.height);
+    const ox = (W - frame.width * k) / 2, oy = (H - frame.height * k) / 2;
+    g.lineWidth = 4;
+    g.strokeStyle = '#e2c88f';
+    g.shadowColor = 'rgba(0,0,0,0.6)';
+    g.shadowBlur = 4;
+    g.beginPath();
+    let pen = false;
+    for (let x = 0; x < boundary.length; x++) {
+      const v = boundary[x];
+      if (v < 0) {
+        pen = false;
+        continue;
+      }
+      const sx = ox + (x + 0.5) * k, sy = oy + (v - 0.5) * k;
+      if (pen) g.lineTo(sx, sy);
+      else g.moveTo(sx, sy);
+      pen = true;
+    }
+    g.stroke();
+  }
+
+  const finishAuto = () => {
+    const fit = fitRoom(autoPts.current);
+    if (!fit) return;
+    setCorners(fit.polygon);
+    setSquare(fit.method === 'square');
+    setStage('ceiling');
   };
 
   const live = orient ? floorPointFromDirs(recent.current, height) : null;
@@ -163,7 +286,7 @@ export function CameraScan({ units, onDone, onClose }: { units: UnitSystem; onDo
           <ol className="scan-steps">
             <li><b>Stand near the middle of the room.</b> Stay on the same spot for the whole scan.</li>
             <li><b>Hold the phone at chest height</b> and keep it at that height.</li>
-            <li><b>Aim the dot at a corner, right where the walls meet the floor</b>, then tap <b>Mark corner</b>. Turn on the spot and do every corner in order, all the way round.</li>
+            <li><b>Point the camera where the walls meet the floor</b> and turn slowly on the spot, all the way round.</li>
             <li>Optionally aim at the top of one corner for the ceiling height.</li>
           </ol>
           <label className="field">
@@ -174,6 +297,15 @@ export function CameraScan({ units, onDone, onClose }: { units: UnitSystem; onDo
             The whole scan is scaled from this number, so measure it once with a tape if you can (floor to phone at chest height, usually 1.2–1.5 m).
             Results are estimates; measuring one wall at the end makes them much more accurate.
           </p>
+          <div className="seg" role="tablist" style={{ alignSelf: 'flex-start' }}>
+            <button className={mode === 'auto' ? 'on' : ''} onClick={() => setMode('auto')} data-testid="mode-auto">Automatic</button>
+            <button className={mode === 'tap' ? 'on' : ''} onClick={() => setMode('tap')} data-testid="mode-tap">Tap each corner</button>
+          </div>
+          <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>
+            {mode === 'auto'
+              ? 'Automatic: point the camera at the floor where it meets the walls and turn slowly on the spot, all the way round. The app finds the floor edge and draws the walls.'
+              : 'Tap each corner: aim the dot at every corner where the walls meet the floor and tap Mark. Best when furniture hides the floor edge.'}
+          </p>
           {sensorProblem && <div className="note err">{sensorProblem}</div>}
           <button className="btn primary" style={{ minHeight: 50, fontSize: 16 }} onClick={start} data-testid="scan-start">
             <Icon name="camera" /> Start scan
@@ -181,6 +313,37 @@ export function CameraScan({ units, onDone, onClose }: { units: UnitSystem; onDo
         </div>
       </Overlay>
     );
+
+  if (stage === 'auto') {
+    const pct = Math.min(100, Math.round((auto.coverage / 360) * 100));
+    return (
+      <div className="scan-live" data-testid="scan-auto">
+        <video ref={video} playsInline muted autoPlay />
+        <canvas ref={overlay} className="scan-overlay-canvas" />
+        <div className="scan-top">
+          <button className="btn sm" onClick={onClose} aria-label="Cancel scan"><Icon name="close" /></button>
+          <div className="scan-msg">
+            {auto.seeing ? (
+              <><b>Keep turning slowly</b>, keeping the gold line on the bottom of the walls</>
+            ) : pitch > -8 ? (
+              <><b>Tilt the phone down</b> until the floor and the bottom of the walls are in the picture</>
+            ) : (
+              <><b>Point at the floor</b> just in front of a wall</>
+            )}
+            <span data-testid="scan-coverage">{pct}% of the room seen{auto.fit ? ` · ${auto.fit.polygon.length} walls found` : ''}</span>
+          </div>
+        </div>
+        {(sensorProblem || camProblem) && <div className="scan-warn">{sensorProblem ?? camProblem}</div>}
+        <div className="scan-ring" style={{ background: `conic-gradient(#c8a96a ${pct * 3.6}deg, rgba(255,255,255,0.15) 0)` }}><span>{pct}%</span></div>
+        <AutoMap points={autoPts.current} fit={auto.fit} />
+        <div className="scan-bottom">
+          <button className="btn" onClick={() => { autoPts.current = []; floorModel.current = undefined; setAuto({ coverage: 0, fit: null, seeing: false, learnt: false }); }}>Restart</button>
+          <button className="scan-mark" disabled={!auto.fit} onClick={finishAuto} data-testid="scan-auto-finish">{auto.fit ? 'Finish' : 'Scanning…'}</button>
+          <button className="btn" onClick={() => setStage('corners')}>Tap corners</button>
+        </div>
+      </div>
+    );
+  }
 
   if (stage === 'corners' || stage === 'ceiling')
     return (
@@ -260,7 +423,7 @@ export function CameraScan({ units, onDone, onClose }: { units: UnitSystem; onDo
           </div>
         </div>
         <div className="row">
-          <button className="btn" onClick={() => { setCorners([]); setPhotos([]); setCeiling(undefined); setCalLen(null); setStage('corners'); }}>Scan again</button>
+          <button className="btn" onClick={() => { setCorners([]); setPhotos([]); setCeiling(undefined); setCalLen(null); autoPts.current = []; floorModel.current = undefined; setAuto({ coverage: 0, fit: null, seeing: false, learnt: false }); setStage(mode === 'auto' ? 'auto' : 'corners'); }}>Scan again</button>
           <span className="spacer" />
           <button className="btn primary" style={{ minHeight: 46 }} data-testid="scan-create" onClick={() => onDone({ polygon: final, measuredEdge: calLen ? calEdge : undefined, measuredMethod: 'tape', ceiling: finalCeiling, photos })}>
             <Icon name="check" /> Create room
@@ -268,6 +431,23 @@ export function CameraScan({ units, onDone, onClose }: { units: UnitSystem; onDo
         </div>
       </div>
     </Overlay>
+  );
+}
+
+function AutoMap({ points, fit }: { points: Point[]; fit: RoomFit | null }) {
+  const step = Math.max(1, Math.floor(points.length / 600));
+  const sample = points.filter((_, i) => i % step === 0);
+  const all = [...sample, ...(fit?.polygon ?? []), { x: 0, y: 0 }];
+  const b = bounds(all);
+  const size = Math.max(b.w, b.h, 3000) * 1.25;
+  const cx = b.minX + b.w / 2, cy = b.minY + b.h / 2;
+  const sw = size / 90;
+  return (
+    <svg className="scan-map" viewBox={`${cx - size / 2} ${cy - size / 2} ${size} ${size}`}>
+      {sample.map((p, i) => <rect key={i} x={p.x - sw / 2} y={p.y - sw / 2} width={sw} height={sw} fill="rgba(226,200,143,0.55)" />)}
+      {fit && <polygon points={fit.polygon.map((p) => `${p.x},${p.y}`).join(' ')} fill="rgba(200,169,106,0.15)" stroke="#fff" strokeWidth={sw} />}
+      <circle cx={0} cy={0} r={sw * 2.5} fill="#8aa7c8" />
+    </svg>
   );
 }
 

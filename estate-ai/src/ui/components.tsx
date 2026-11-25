@@ -157,7 +157,7 @@ export function MeasureEditor({ m, units, onChange, label }: { m: Measure; units
         <select
           aria-label="Method"
           value={m.method && m.method !== 'drawn' ? m.method : 'tape'}
-          style={{ width: 150, flex: 'none' }}
+          style={{ width: 140, flex: 'none', maxWidth: '45%' }}
           onChange={(e) => {
             const method = e.target.value as MeasureMethod;
             onChange({ ...m, method, status: m.status === 'unknown' ? 'unknown' : methodStatus(method), at: Date.now() });

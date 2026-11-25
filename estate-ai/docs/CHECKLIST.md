@@ -22,6 +22,9 @@ iPhone 13 viewport. **Not yet tested on a real iPhone** — that is the most imp
 - [x] Guided capture with camera (getUserMedia) and file-picker fallback; photos filed to the room
 - [~] Level guide from device orientation (needs a real phone to verify)
 - [x] Camera room scan: aim at each floor corner from one spot; phone height + motion sensors place corners; square-up; one tape measurement rescales; ceiling from one aim; saved as estimates (maths unit-tested, flow tested with simulated sensors; not yet on a real iPhone)
+- [x] Automatic camera scan: turn on the spot; on-device vision finds the floor edge in each frame, sensors + phone height place it on the plan, walls are fitted (square corners, L-shapes, small furniture ignored). Tested with rendered synthetic camera frames; **not yet tested with a real camera in a real room**
+- [x] Measure sheet after a scan: wall lengths, ceiling height, door/window sizes and any custom measurement, all saved as measured
+- [x] Plan tape tool: drag between two points (snaps to corners and walls), name it, enter the measured length
 - [x] Photo estimate with rectangle reference (homography) or known length; saved as estimates only
 - [x] Metric and imperial input/display (feet-inches, fractions)
 

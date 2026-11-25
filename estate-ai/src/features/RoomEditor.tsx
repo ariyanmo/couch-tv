@@ -13,12 +13,14 @@ import { go, queryParam } from '../ui/router';
 import { Camera, roomSlots } from './capture/Camera';
 import { PhotoMeasure } from './capture/PhotoMeasure';
 import { CameraScan } from './capture/CameraScan';
+import { MeasureSheet } from './capture/MeasureSheet';
 
 type Tab = 'shape' | 'openings' | 'photos' | 'notes';
 
 export default function RoomEditor({ property: p, params }: PageProps) {
   const room = p.rooms.find((r) => r.id === params[0]);
   const [tab, setTab] = useState<Tab>('shape');
+  const [measure, setMeasure] = useState(false);
   if (!room) return <div className="empty">Room not found.</div>;
   const a = roomFloorArea(room);
   const w = roomWallArea(room);
@@ -32,6 +34,13 @@ export default function RoomEditor({ property: p, params }: PageProps) {
         <div className="card stat"><span className="label">Walls measured</span><span className="value" style={{ fontSize: 22 }}>{room.edges.filter((e) => e.status === 'measured').length}/{room.polygon.length || '—'}</span></div>
       </div>
       {a.reasons.length > 0 && <div className="note">{a.reasons.join(' · ')}</div>}
+      {room.polygon.length >= 3 && (
+        <div className="row">
+          <button className="btn primary" onClick={() => setMeasure(true)} data-testid="open-measure"><Icon name="ruler" /> Measure</button>
+          <span className="faint" style={{ fontSize: 13 }}>Enter real lengths, heights or anything else you measured.</span>
+        </div>
+      )}
+      {measure && <MeasureSheet property={p} room={room} onClose={() => setMeasure(false)} />}
 
       <div className="tabs">
         {(['shape', 'openings', 'photos', 'notes'] as Tab[]).map((t) => (
@@ -40,7 +49,7 @@ export default function RoomEditor({ property: p, params }: PageProps) {
           </button>
         ))}
       </div>
-      {tab === 'shape' && <ShapeTab p={p} room={room} />}
+      {tab === 'shape' && <ShapeTab p={p} room={room} onScanned={() => setMeasure(true)} />}
       {tab === 'openings' && <OpeningsTab p={p} room={room} />}
       {tab === 'photos' && <PhotosTab p={p} room={room} />}
       {tab === 'notes' && <DetailsTab p={p} room={room} />}
@@ -81,7 +90,7 @@ export function RoomPreview({ room, units, height = 260, highlight }: { room: Ro
   );
 }
 
-function ShapeTab({ p, room }: { p: Property; room: Room }) {
+function ShapeTab({ p, room, onScanned }: { p: Property; room: Room; onScanned: () => void }) {
   const [reset, setReset] = useState(false);
   const has = room.polygon.length >= 3;
   const upd = (fn: (r: Room) => Room) => updateRoom(p.id, room.id, fn);
@@ -89,7 +98,7 @@ function ShapeTab({ p, room }: { p: Property; room: Room }) {
     <div className="grid cols-2">
       <div className="stack">
         {!has ? (
-          <ShapeEntry p={p} room={room} />
+          <ShapeEntry p={p} room={room} onScanned={onScanned} />
         ) : (
           <div className="card stack">
             <div className="card-title">
@@ -159,7 +168,7 @@ interface StepRow {
   angle: number;
 }
 
-function ShapeEntry({ p, room }: { p: Property; room: Room }) {
+function ShapeEntry({ p, room, onScanned }: { p: Property; room: Room; onScanned: () => void }) {
   const [mode, setMode] = useState<'rect' | 'walk'>('rect');
   const [scan, setScan] = useState(() => queryParam('scan') === '1');
   const [wv, setWv] = useState<number | null>(null);
@@ -195,6 +204,7 @@ function ShapeEntry({ p, room }: { p: Property; room: Room }) {
             for (let i = 0; i < r.photos.length; i++)
               await addPhoto(p.id, r.photos[i], { name: `${room.name} corner ${i + 1}.jpg`, roomId: room.id, shot: `corner-${i + 1}`, assignedBy: 'capture' });
             toast(r.measuredEdge != null ? 'Room created from the scan and your measurement.' : 'Room created from the scan. Walls are estimates until you measure them.', 'ok');
+            onScanned();
           }}
         />
       )}
@@ -401,6 +411,9 @@ function DetailsTab({ p, room }: { p: Property; room: Room }) {
           <tbody>
             {room.edges.map((e, i) => (
               <tr key={i}><td>Wall {i + 1}</td><td className="num">{fmtLen(e.value, p.units)}</td><td>{STATUS_LABEL[e.status]}</td><td className="faint">{e.method ?? ''}</td></tr>
+            ))}
+            {(room.customMeasures ?? []).map((c) => (
+              <tr key={c.id}><td>{c.label}</td><td className="num">{c.value.status === 'unknown' ? '—' : fmtLen(c.value.value, p.units)}</td><td>{STATUS_LABEL[c.value.status]}</td><td className="faint">{c.value.method ?? ''}</td></tr>
             ))}
             <tr><td>Ceiling</td><td className="num">{room.ceilingHeight.status === 'unknown' ? '—' : fmtLen(room.ceilingHeight.value, p.units)}</td><td>{STATUS_LABEL[room.ceilingHeight.status]}</td><td className="faint">{room.ceilingHeight.method ?? ''}</td></tr>
           </tbody>

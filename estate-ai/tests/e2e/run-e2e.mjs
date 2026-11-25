@@ -309,6 +309,7 @@ await test('camera scan builds a room from aimed corners (phone)', async () => {
   await p5.getByTestId('scan-room').click();
   await p5.getByLabel('Phone height').fill('1.3');
   await p5.getByLabel('Phone height').press('Enter');
+  await p5.getByTestId('mode-tap').click();
   await p5.getByTestId('scan-start').click();
   await p5.getByTestId('scan-live').waitFor();
   // A 4.0 × 3.0 m room with the phone 1.3 m up, standing off-centre.
@@ -331,6 +332,89 @@ await test('camera scan builds a room from aimed corners (phone)', async () => {
   const chip = await p5.locator('.stat .chip').first().innerText();
   assert(/Estimate/.test(chip), 'scanned area must be an estimate, got ' + chip);
   await ctx5.close();
+});
+
+await test('automatic scan from simulated camera frames, then Measure', async () => {
+  const ctx6 = await browser.newContext({ ...devices['iPhone 13'], permissions: ['camera', 'accelerometer', 'gyroscope', 'magnetometer'] });
+  const p6 = await ctx6.newPage();
+  p6.setDefaultTimeout(20000);
+  p6.on('pageerror', (e) => errors.push('auto pageerror: ' + e.message));
+  await p6.goto(BASE);
+  // Feed the scanner frames rendered from a virtual 4.5 × 3.5 m room, turning on the spot.
+  await p6.evaluate(() => {
+    const room = [{ x: -2100, y: -1600 }, { x: 2400, y: -1600 }, { x: 2400, y: 1900 }, { x: -2100, y: 1900 }];
+    const H = 1350, W = 72, Hh = 96, fov = 66;
+    const inside = (p) => { let c = false; for (let i = 0, j = room.length - 1; i < room.length; j = i++) { const a = room[i], b = room[j]; if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) c = !c; } return c; };
+    let alpha = 0;
+    window.__estateScanSource = () => {
+      alpha = (alpha + 5) % 360;
+      if (window.__scanTurns === undefined) window.__scanTurns = 0;
+      window.__scanTurns += 5;
+      const o = { alpha, beta: 62, gamma: 0 };
+      const r = Math.PI / 180, sA = Math.sin(o.alpha * r), cA = Math.cos(o.alpha * r), sB = Math.sin(o.beta * r), cB = Math.cos(o.beta * r), sG = 0, cG = 1;
+      const R = [cA * cG - sA * sB * sG, -cB * sA, cG * sA * sB + cA * sG, cG * sA + cA * sB * sG, cA * cB, sA * sG - cA * cG * sB, -cB * sG, sB, cB * cG];
+      const f = Math.max(W, Hh) / 2 / Math.tan((fov * Math.PI) / 360);
+      const data = new Uint8ClampedArray(W * Hh * 4);
+      for (let v = 0; v < Hh; v++) for (let u = 0; u < W; u++) {
+        const dx = (u + 0.5 - W / 2) / f, dy = -(v + 0.5 - Hh / 2) / f;
+        const d = { x: R[0] * dx + R[1] * dy - R[2], y: R[3] * dx + R[4] * dy - R[5], z: R[6] * dx + R[7] * dy - R[8] };
+        let c = [225, 222, 214];
+        if (d.z < 0) { const t = H / -d.z; const p = { x: d.x * t, y: -d.y * t }; if (inside(p)) c = [150, 108, 70]; }
+        const i = (v * W + u) * 4; const n = (Math.random() - 0.5) * 12;
+        data[i] = c[0] + n; data[i + 1] = c[1] + n; data[i + 2] = c[2] + n; data[i + 3] = 255;
+      }
+      return { frame: { data, width: W, height: Hh }, orientation: o, screenAngle: 0 };
+    };
+  });
+  await p6.getByTestId('new-property').click();
+  await p6.getByTestId('create-property').click();
+  await p6.getByTestId('add-room').first().click();
+  await p6.getByTestId('create-room-scan').click();
+  await p6.getByLabel('Phone height').fill('1.35');
+  await p6.getByLabel('Phone height').press('Enter');
+  await p6.getByTestId('mode-auto').click();
+  await p6.getByTestId('scan-start').click();
+  await p6.getByTestId('scan-auto').waitFor();
+  await p6.waitForFunction(() => /9\d%|100%/.test(document.querySelector('[data-testid="scan-coverage"]')?.textContent ?? ''), null, { timeout: 30000 });
+  await p6.screenshot({ path: join(out, '13-auto-scan.png') });
+  await p6.getByTestId('scan-auto-finish').click();
+  await p6.getByRole('button', { name: 'Skip' }).click();
+  const areaText = await p6.locator('.scan-overlay').getByText(/Floor area/).first().innerText();
+  const m2 = parseFloat(areaText.match(/([\d.]+) m²/)[1]);
+  assert(Math.abs(m2 - 15.75) < 1.2, 'auto scan area should be about 15.75 m², got ' + m2);
+  await p6.getByTestId('scan-create').click();
+  // measure sheet opens straight after the scan
+  const sheet = p6.getByRole('dialog', { name: /Measure:/ });
+  await sheet.waitFor();
+  await sheet.getByLabel('Ceiling height').fill('2.6');
+  await sheet.getByLabel('Ceiling height').press('Enter');
+  await p6.getByTestId('custom-measure-name').fill('Fridge gap');
+  await p6.getByTestId('custom-measure-add').click();
+  await sheet.getByText('1/5 measured').waitFor();
+  await sheet.getByText('Ceiling height').first().waitFor();
+  await p6.screenshot({ path: join(out, '14-measure-sheet.png') });
+  const wide = await p6.evaluate(() => [...document.querySelectorAll('.modal *')].some((el) => el.getBoundingClientRect().right > window.innerWidth + 1));
+  assert(!wide, 'measure sheet is wider than the phone screen');
+  await p6.getByTestId('measure-done').click();
+  await ctx6.close();
+});
+
+await test('plan tape tool records a measured line', async () => {
+  await page.goto(globalThis.sampleUrl + '/plan');
+  await page.getByTestId('plan-svg').waitFor();
+  await page.locator('[data-tool="measure"]').click();
+  const box = await page.getByTestId('plan-svg').boundingBox();
+  await page.mouse.move(box.x + box.width * 0.35, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5, { steps: 6 });
+  await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.5, { steps: 6 });
+  await page.mouse.up();
+  await page.getByTestId('annotation-label').fill('Bench run');
+  await page.getByLabel('Measured length').fill('2.4');
+  await page.getByLabel('Measured length').press('Enter');
+  await page.getByTestId('save-annotation').click();
+  await page.getByText(/Bench run: 2\.40 m/).waitFor();
+  await shot('15-plan-tape');
 });
 
 await test('no uncaught errors', async () => {

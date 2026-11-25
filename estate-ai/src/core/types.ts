@@ -129,11 +129,28 @@ export interface Room {
   activeConceptId?: string;
   notes?: string;
   listingText?: string; // optional hand-written description for listings
+  customMeasures?: CustomMeasure[]; // anything else the user measured (e.g. "window to corner")
   captureChecklist?: Record<string, boolean>;
   // Closure error from a wall-walk entry (mm). Shown honestly to the user.
   closureError?: number;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface CustomMeasure {
+  id: string;
+  label: string;
+  value: Measure;
+}
+
+/** A dimension line drawn on the plan with the tape tool. */
+export interface Annotation {
+  id: string;
+  floorId: string;
+  a: Point;
+  b: Point;
+  label?: string;
+  measured?: Measure; // what the user measured in the room; absent = only the drawn distance
 }
 
 export interface Floor {
@@ -240,6 +257,7 @@ export interface Property {
   highlights?: string[];
   coverPhotoId?: string;
   listingPhotoIds?: string[];
+  annotations?: Annotation[];
   agent?: { name?: string; phone?: string; email?: string; agency?: string };
 }
 

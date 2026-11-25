@@ -2,7 +2,16 @@
 
 ## What ESTATE AI does
 
-**Camera scan (quickest).** Stand near the middle of the room holding the phone at a known height, aim the
+**Automatic scan.** Point the camera at the bottom of the walls and turn slowly on the spot. Each video frame is
+shrunk to about 96 × 128 pixels; the floor is found by growing a region of floor-coloured pixels up from the bottom
+of the picture, stopped at strong edges such as skirting boards. The top of that region in each column is the
+floor's edge; with the camera's field of view (about 66° across the long side on iPhone main cameras), the motion
+sensors and the phone height, each edge pixel becomes a point on the floor. A full turn gives a ring of points that
+is fitted with straight walls. It runs entirely on the phone: no AI model download (the model hosts were not
+reachable when this was built), no upload. It works best when the floor and walls differ in colour and the bottom
+of the walls is visible; big furniture against a wall shows up as a notch to fix with Measure or the plan.
+
+**Tap each corner.** Stand near the middle of the room holding the phone at a known height, aim the
 on-screen dot at each corner where the walls meet the floor and tap Mark. The motion sensors give the camera's
 downward angle and direction; distance to the corner = phone height ÷ tan(angle). Corners are placed on the plan,
 optionally squared up, and the whole outline can be rescaled from one tape-measured wall. Accuracy is a few
