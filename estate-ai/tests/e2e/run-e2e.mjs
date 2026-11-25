@@ -250,6 +250,7 @@ await test('backup and restore round trip', async () => {
   const [chooser] = await Promise.all([p2.waitForEvent('filechooser'), p2.getByRole('button', { name: 'Restore from file' }).click()]);
   await chooser.setFiles(p);
   await p2.getByTestId('restore-merge').click();
+  await p2.getByText(/Restored 2 propert/).waitFor();
   await p2.goto(BASE);
   await p2.getByText('Test House').waitFor();
   assert((await p2.getByTestId('property-card').count()) === 2, 'restored property count wrong');
@@ -292,6 +293,44 @@ await test('iPhone layout: bottom navigation and plan', async () => {
   await p4.locator('.bottom-nav button', { hasText: 'More' }).click();
   await p4.getByRole('dialog', { name: 'More tools' }).waitFor();
   await ctx4.close();
+});
+
+await test('camera scan builds a room from aimed corners (phone)', async () => {
+  const ctx5 = await browser.newContext({ ...devices['iPhone 13'], permissions: ['camera', 'accelerometer', 'gyroscope', 'magnetometer'] });
+  const p5 = await ctx5.newPage();
+  p5.setDefaultTimeout(15000);
+  p5.on('pageerror', (e) => errors.push('scan pageerror: ' + e.message));
+  await p5.goto(BASE);
+  await p5.getByTestId('new-property').click();
+  await p5.getByPlaceholder('e.g. Harbour View Apartment').fill('Scan Test');
+  await p5.getByTestId('create-property').click();
+  await p5.getByTestId('add-room').first().click();
+  await p5.getByTestId('create-room').click();
+  await p5.getByTestId('scan-room').click();
+  await p5.getByLabel('Phone height').fill('1.3');
+  await p5.getByLabel('Phone height').press('Enter');
+  await p5.getByTestId('scan-start').click();
+  await p5.getByTestId('scan-live').waitFor();
+  // A 4.0 × 3.0 m room with the phone 1.3 m up, standing off-centre.
+  const room = [{ x: -1500, y: -1200 }, { x: 2500, y: -1200 }, { x: 2500, y: 1800 }, { x: -1500, y: 1800 }];
+  for (const c of room) {
+    await p5.evaluate(({ c, h }) => {
+      const nx = c.x, ny = -c.y;
+      const theta = Math.atan2(h, Math.hypot(nx, ny));
+      const o = { alpha: (Math.atan2(-nx, ny) * 180) / Math.PI, beta: 90 - (theta * 180) / Math.PI, gamma: 0 };
+      for (let i = 0; i < 10; i++) window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', o));
+    }, { c, h: 1300 });
+    await p5.getByTestId('scan-mark').click();
+  }
+  await p5.getByTestId('scan-done').click();
+  await p5.getByRole('button', { name: 'Skip' }).click();
+  await p5.getByText('12.0 m²').first().waitFor();
+  await p5.screenshot({ path: join(out, '12-scan-review.png') });
+  await p5.getByTestId('scan-create').click();
+  await p5.getByText('12.00 m²').first().waitFor();
+  const chip = await p5.locator('.stat .chip').first().innerText();
+  assert(/Estimate/.test(chip), 'scanned area must be an estimate, got ' + chip);
+  await ctx5.close();
 });
 
 await test('no uncaught errors', async () => {

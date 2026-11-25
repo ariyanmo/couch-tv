@@ -3,15 +3,16 @@ import type { PageProps } from '../App';
 import { CLOSURE_TOLERANCE_MM, roomFloorArea, roomWallArea } from '../core/calc';
 import { ROOM_TYPES } from '../core/catalog';
 import { centroid, edgeLength, edgeOutwardNormal, bounds, wallWalk, type WallWalkStep } from '../core/geometry';
-import { applyRectangle, applyWallWalk, clampOpening, createOpening, setWallLength } from '../core/model';
+import { applyRectangle, applyScan, applyWallWalk, clampOpening, createOpening, setWallLength } from '../core/model';
 import type { MeasureMethod, OpeningType, Property, Room, RoomType } from '../core/types';
 import { fmtLen, STATUS_LABEL } from '../core/units';
 import { addPhoto, toast, updateProperty, updateRoom, useStore } from '../store/store';
 import { Confirm, FigureValue, LengthInput, METHODS, MeasureEditor, PhotoThumb, Seg, StatusChip, methodStatus } from '../ui/components';
 import { Icon } from '../ui/icons';
-import { go } from '../ui/router';
+import { go, queryParam } from '../ui/router';
 import { Camera, roomSlots } from './capture/Camera';
 import { PhotoMeasure } from './capture/PhotoMeasure';
+import { CameraScan } from './capture/CameraScan';
 
 type Tab = 'shape' | 'openings' | 'photos' | 'notes';
 
@@ -160,6 +161,7 @@ interface StepRow {
 
 function ShapeEntry({ p, room }: { p: Property; room: Room }) {
   const [mode, setMode] = useState<'rect' | 'walk'>('rect');
+  const [scan, setScan] = useState(() => queryParam('scan') === '1');
   const [wv, setWv] = useState<number | null>(null);
   const [dv, setDv] = useState<number | null>(null);
   const [method, setMethod] = useState<MeasureMethod>('tape');
@@ -178,7 +180,25 @@ function ShapeEntry({ p, room }: { p: Property; room: Room }) {
 
   return (
     <div className="card stack">
-      <h3>Enter the room shape</h3>
+      <h3>Get the room shape</h3>
+      <button className="btn primary" style={{ minHeight: 54, fontSize: 16 }} onClick={() => setScan(true)} data-testid="scan-room">
+        <Icon name="camera" /> Scan the room with the camera
+      </button>
+      <p className="faint" style={{ fontSize: 13 }}>Stand in the middle, aim at each corner, and the app draws the room. Quick, but an estimate: add one tape measurement for accuracy.</p>
+      {scan && (
+        <CameraScan
+          units={p.units}
+          onClose={() => setScan(false)}
+          onDone={async (r) => {
+            setScan(false);
+            updateRoom(p.id, room.id, (rr) => applyScan(rr, r.polygon, { measuredEdge: r.measuredEdge, measuredMethod: r.measuredMethod, ceiling: r.ceiling, origin: origin() }));
+            for (let i = 0; i < r.photos.length; i++)
+              await addPhoto(p.id, r.photos[i], { name: `${room.name} corner ${i + 1}.jpg`, roomId: room.id, shot: `corner-${i + 1}`, assignedBy: 'capture' });
+            toast(r.measuredEdge != null ? 'Room created from the scan and your measurement.' : 'Room created from the scan. Walls are estimates until you measure them.', 'ok');
+          }}
+        />
+      )}
+      <div className="row"><span className="faint">or enter measurements</span></div>
       <Seg value={mode} options={[{ id: 'rect', label: 'Rectangle' }, { id: 'walk', label: 'Wall by wall (any shape)' }]} onChange={setMode} />
       <label className="field">How did you measure?
         <select value={method} onChange={(e) => setMethod(e.target.value as MeasureMethod)}>

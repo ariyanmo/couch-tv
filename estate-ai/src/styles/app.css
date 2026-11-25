@@ -341,3 +341,22 @@ table.data td.num, table.data th.num { text-align: right; font-variant-numeric: 
   .legend .hint { display: none; }
   .topbar h1 { font-size: 18px; }
 }
+
+/* camera room scan */
+.scan-overlay { position: fixed; inset: 0; z-index: 150; background: var(--bg); overflow-y: auto; padding: calc(16px + var(--safe-t)) 16px calc(24px + var(--safe-b)); }
+.scan-steps { margin: 0; padding-left: 20px; display: grid; gap: 8px; color: var(--text-2); font-size: 14.5px; }
+.scan-steps b { color: var(--text); font-weight: 600; }
+.scan-live { position: fixed; inset: 0; z-index: 150; background: #000; overflow: hidden; touch-action: none; }
+.scan-live video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.scan-cross { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border: 2px solid #c8a96a; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0,0,0,0.5); pointer-events: none; }
+.scan-cross::after { content: ''; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #fff; }
+.scan-flash { position: absolute; inset: 0; background: #fff; opacity: 0.5; pointer-events: none; }
+.scan-top { position: absolute; top: calc(10px + var(--safe-t)); left: 10px; right: 10px; display: flex; gap: 10px; align-items: flex-start; }
+.scan-msg { flex: 1; background: rgba(0,0,0,0.62); border-radius: 12px; padding: 9px 12px; font-size: 14px; line-height: 1.35; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.scan-msg span { display: block; color: #e2c88f; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.scan-warn { position: absolute; top: calc(90px + var(--safe-t)); left: 10px; right: 10px; background: rgba(120,40,30,0.85); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
+.scan-map { position: absolute; right: 10px; bottom: calc(110px + var(--safe-b)); width: 130px; height: 130px; background: rgba(0,0,0,0.6); border-radius: 14px; border: 1px solid rgba(255,255,255,0.15); }
+.scan-bottom { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 14px calc(18px + var(--safe-b)); background: linear-gradient(transparent, rgba(0,0,0,0.75)); }
+.scan-mark { flex: none; width: 108px; height: 108px; border-radius: 50%; border: 4px solid #fff; background: rgba(200,169,106,0.85); color: #17140e; font: 700 15px var(--font); cursor: pointer; }
+.scan-mark:disabled { background: rgba(255,255,255,0.2); color: rgba(255,255,255,0.6); }
+.scan-mark:active:not(:disabled) { transform: scale(0.96); }

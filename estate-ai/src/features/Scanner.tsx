@@ -181,13 +181,13 @@ export default function Scanner({ property: p }: PageProps) {
 function AddRoom({ property, floorId, onClose }: { property: Property; floorId: string; onClose: () => void }) {
   const [type, setType] = useState<RoomType>('bedroom');
   const [name, setName] = useState('');
-  const create = () => {
+  const create = (scan = false) => {
     const count = property.rooms.filter((r) => r.type === type).length;
     const label = ROOM_TYPES.find((t) => t.id === type)!.label;
     const room = createRoom(floorId, name.trim() || (count ? `${label} ${count + 1}` : label), type);
     updateProperty(property.id, (x) => ({ ...x, rooms: [...x.rooms, room] }));
     onClose();
-    go(`p/${property.id}/scan/${room.id}`);
+    go(`p/${property.id}/scan/${room.id}${scan ? '?scan=1' : ''}`);
   };
   return (
     <Modal
@@ -196,7 +196,8 @@ function AddRoom({ property, floorId, onClose }: { property: Property; floorId: 
       footer={
         <>
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" onClick={create} data-testid="create-room">Add room</button>
+          <button className="btn" onClick={() => create(false)} data-testid="create-room">Add room</button>
+          <button className="btn primary" onClick={() => create(true)} data-testid="create-room-scan">Add & scan with camera</button>
         </>
       }
     >
@@ -209,7 +210,7 @@ function AddRoom({ property, floorId, onClose }: { property: Property; floorId: 
       </div>
       <label className="field">
         Name (optional)
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={ROOM_TYPES.find((t) => t.id === type)!.label} onKeyDown={(e) => e.key === 'Enter' && create()} />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={ROOM_TYPES.find((t) => t.id === type)!.label} onKeyDown={(e) => e.key === 'Enter' && create(false)} />
       </label>
       {!ROOM_TYPES.find((t) => t.id === type)!.countsByDefault && <p className="faint">This room type is left out of the interior area by default. You can change that per room.</p>}
     </Modal>

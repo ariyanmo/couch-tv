@@ -8,7 +8,7 @@ export type Provenance =
   | 'drawn' // follows from geometry the user drew on screen, not measured
   | 'unknown'; // nothing recorded
 
-export type MeasureMethod = 'tape' | 'laser' | 'plan' | 'camera-reference' | 'manual-estimate' | 'drawn';
+export type MeasureMethod = 'tape' | 'laser' | 'plan' | 'camera-reference' | 'camera-scan' | 'manual-estimate' | 'drawn';
 
 export interface Measure {
   value: number; // mm

@@ -21,6 +21,7 @@ iPhone 13 viewport. **Not yet tested on a real iPhone** — that is the most imp
 - [x] Ceiling heights, wall thickness, doors/windows/openings with width/height/sill/offset
 - [x] Guided capture with camera (getUserMedia) and file-picker fallback; photos filed to the room
 - [~] Level guide from device orientation (needs a real phone to verify)
+- [x] Camera room scan: aim at each floor corner from one spot; phone height + motion sensors place corners; square-up; one tape measurement rescales; ceiling from one aim; saved as estimates (maths unit-tested, flow tested with simulated sensors; not yet on a real iPhone)
 - [x] Photo estimate with rectangle reference (homography) or known length; saved as estimates only
 - [x] Metric and imperial input/display (feet-inches, fractions)
 

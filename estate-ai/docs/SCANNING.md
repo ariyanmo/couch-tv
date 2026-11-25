@@ -2,6 +2,15 @@
 
 ## What ESTATE AI does
 
+**Camera scan (quickest).** Stand near the middle of the room holding the phone at a known height, aim the
+on-screen dot at each corner where the walls meet the floor and tap Mark. The motion sensors give the camera's
+downward angle and direction; distance to the corner = phone height ÷ tan(angle). Corners are placed on the plan,
+optionally squared up, and the whole outline can be rescaled from one tape-measured wall. Accuracy is a few
+percent at best (worse for far corners seen at shallow angles), so every wall is saved as **Estimated** except a
+wall you measure. A video alone can't do this reliably: without depth (LiDAR) or a known height, nothing in the
+picture says how big the room is.
+
+
 1. **You measure** walls and ceilings with a tape or laser (a basic laser measure is the single best accuracy
    upgrade). These are the only values marked **Measured**.
 2. **The camera documents** each room with guided shots (overview, corners, walls, ceiling, floor, openings) and a

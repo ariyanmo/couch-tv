@@ -267,3 +267,37 @@ export function createSampleProperty(): Property {
   p.highlights = ['North-facing living (sample)', 'Separate laundry (sample)'];
   return p;
 }
+
+/**
+ * Room from a camera scan. Every wall is an estimate; if the user measured one
+ * wall to fix the scale, that wall alone is marked measured.
+ */
+export function applyScan(
+  room: Room,
+  polygon: Point[],
+  opts: { measuredEdge?: number; measuredMethod?: MeasureMethod; ceiling?: number; origin?: Point } = {},
+): Room {
+  const o = opts.origin ?? { x: 0, y: 0 };
+  const minX = Math.min(...polygon.map((p) => p.x));
+  const minY = Math.min(...polygon.map((p) => p.y));
+  const poly = polygon.map((p) => ({ x: Math.round(p.x - minX + o.x), y: Math.round(p.y - minY + o.y) }));
+  const edges: Measure[] = poly.map((_, i) =>
+    i === opts.measuredEdge
+      ? m(edgeLength(poly, i), methodToStatus(opts.measuredMethod ?? 'tape'), opts.measuredMethod ?? 'tape')
+      : { value: edgeLength(poly, i), status: 'estimated', method: 'camera-scan', at: Date.now(), note: 'From camera scan' },
+  );
+  return {
+    ...room,
+    polygon: poly,
+    edges,
+    closureError: undefined,
+    openings: room.openings.filter((op) => op.edge < poly.length),
+    ceilingHeight:
+      opts.ceiling && room.ceilingHeight.status !== 'measured'
+        ? { value: Math.round(opts.ceiling), status: 'estimated', method: 'camera-scan', at: Date.now(), note: 'From camera scan' }
+        : room.ceilingHeight,
+    updatedAt: Date.now(),
+  };
+}
+
+const methodToStatus = (mm: MeasureMethod): Provenance => (mm === 'tape' || mm === 'laser' || mm === 'plan' ? 'measured' : 'estimated');

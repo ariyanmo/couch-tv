@@ -47,7 +47,7 @@ npm run test:e2e     # 19 browser tests in Chromium (needs Playwright: npm i -D 
 | --- | --- |
 | Properties | Multiple properties, address, units (metric/imperial), sample data, delete, completeness meter |
 | Scanner | Floors, rooms, guided 11-step workflow, room connections |
-| Room editor | Rectangle or wall-by-wall entry with closure-error check, wall lengths with method, ceiling height, doors/windows, guided camera capture, photo estimate |
+| Room editor | **Camera scan** (aim at corners, app draws the room), rectangle or wall-by-wall entry with closure-error check, wall lengths with method, ceiling height, doors/windows, guided camera capture, photo estimate |
 | Floor plan | Editable SVG plan: move rooms (snap to neighbours), drag walls and corners, add/split corners, draw rooms, place doors/windows, type measured lengths, undo/redo, wall thickness, labels, areas |
 | 3D model | Three.js model from the plan: walls with real openings, glass, ceilings toggle, dollhouse, no-walls, room focus, multi-floor and separated floors, furniture, PNG export |
 | Renovation studio | Concepts per room (existing vs ideas), flooring, wall/ceiling colour, cabinets, benchtop, tile, light colour and brightness, furniture layout, before/after slider |

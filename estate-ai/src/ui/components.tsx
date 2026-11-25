@@ -69,6 +69,7 @@ export const METHODS: { id: MeasureMethod; label: string; status: Provenance }[]
   { id: 'laser', label: 'Laser measure', status: 'measured' },
   { id: 'plan', label: 'From a plan', status: 'measured' },
   { id: 'camera-reference', label: 'Camera estimate', status: 'estimated' },
+  { id: 'camera-scan', label: 'Camera scan', status: 'estimated' },
   { id: 'manual-estimate', label: 'Rough estimate', status: 'estimated' },
 ];
 
